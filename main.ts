@@ -1,41 +1,84 @@
-// A working gta6-01 entry (Node 22, standard library only): the game is this directory's
-// game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
-// screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. Only the plumbing, not an open world: Block
-// Dodger, a plain 2D canvas game where a paddle dodges falling blocks and catches coins, with a
-// title screen, score, lives and levels, game over and restart, flat colours and no sound. Build
-// your own open-world crime game in its place (three.js or any library you vendor under game/),
-// put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
-//
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+// Crescent Bay — tiny static file server for local playtests.
+// Serves game/ at the root, plus vendor/ and screenshots/.
+// No dependencies: plain Node http + fs. Port from PORT, default 8000.
+import { createServer } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const here = resolve(fileURLToPath(new URL('.', import.meta.url)));
+const port = Number(process.env.PORT || 8000);
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+const mimeByExt: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.ts': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+};
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
-// scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
-// files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
-// screenshots/ and dossier.json).
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
-);
+const roots: Record<string, string> = {
+  '/vendor/': join(here, 'vendor'),
+  '/screenshots/': join(here, 'screenshots'),
+};
+
+function pickFile(urlPath: string): string | null {
+  if (urlPath === '/' || urlPath === '') return join(here, 'game', 'index.html');
+  for (const [prefix, base] of Object.entries(roots)) {
+    if (urlPath.startsWith(prefix)) {
+      return join(base, urlPath.slice(prefix.length));
+    }
+  }
+  return join(here, 'game', urlPath);
+}
+
+function safeInside(root: string, target: string): boolean {
+  const rel = target.startsWith(root) ? target.slice(root.length) : null;
+  return rel !== null && !rel.startsWith('..' + sep) && rel !== '..';
+}
+
+const server = createServer(async (req, res) => {
+  const started = Date.now();
+  try {
+    const raw = new URL(req.url || '/', 'http://localhost').pathname;
+    const decoded = decodeURIComponent(raw);
+    const cleaned = normalize(decoded).replace(/^(\.\.[/\\])+/, '');
+    const file = pickFile(cleaned);
+    const allowedRoots = [join(here, 'game'), join(here, 'vendor'), join(here, 'screenshots')];
+    if (!allowedRoots.some((root) => safeInside(root, file))) {
+      res.writeHead(403, { 'content-type': 'text/plain' });
+      res.end('forbidden');
+      console.log(`${req.method} ${raw} -> 403 ${Date.now() - started}ms`);
+      return;
+    }
+    const info = await stat(file).catch(() => null);
+    if (!info || !info.isFile()) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('not found');
+      console.log(`${req.method} ${raw} -> 404 ${Date.now() - started}ms`);
+      return;
+    }
+    const body = await readFile(file);
+    res.writeHead(200, {
+      'content-type': mimeByExt[extname(file).toLowerCase()] || 'application/octet-stream',
+      'content-length': body.length,
+      'cache-control': 'no-store',
+    });
+    res.end(body);
+    console.log(`${req.method} ${raw} -> 200 ${Date.now() - started}ms`);
+  } catch (err) {
+    res.writeHead(500, { 'content-type': 'text/plain' });
+    res.end('server error');
+    console.log(`${req.method} ${req.url} -> 500 ${Date.now() - started}ms ${(err as Error).message}`);
+  }
+});
+
+server.listen(port, () => {
+  console.log(`crescent-bay server listening on http://localhost:${port}/`);
+});
