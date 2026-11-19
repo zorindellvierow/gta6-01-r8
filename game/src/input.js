@@ -1,53 +1,93 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Crescent Bay — keyboard + mouse input.
+// Safe to import in Node: listeners are only attached when `window` exists.
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+// Canonical key codes used by the game.
+export const KEYS = {
+  UP: ['KeyW', 'ArrowUp'],
+  DOWN: ['KeyS', 'ArrowDown'],
+  LEFT: ['KeyA', 'ArrowLeft'],
+  RIGHT: ['KeyD', 'ArrowRight'],
+  RUN: ['ShiftLeft', 'ShiftRight'],
+  ENTER_CAR: ['KeyF'],
+  TAXI: ['KeyT'],
+  RELOAD: ['KeyR'],
+  PAUSE: ['KeyP', 'Escape'],
+};
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+export class Input {
+  constructor() {
+    this._down = new Set();
+    this._pressed = new Set();
+    this.mouse = { x: 0, y: 0 };
+    this.mouseDown = false;
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
+    // No window (Node smoke test, SSR): stay inert, methods still work.
+    if (typeof window === 'undefined') return;
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
+    window.addEventListener('keydown', (event) => {
+      if (!event.repeat) this._pressed.add(event.code);
+      this._down.add(event.code);
+      if (KEYS.PAUSE.includes(event.code) || event.code.startsWith('Arrow')) {
+        event.preventDefault();
+      }
+    });
+    window.addEventListener('keyup', (event) => {
+      this._down.delete(event.code);
+    });
+    window.addEventListener('blur', () => {
+      this._down.clear();
+    });
+    window.addEventListener('mousemove', (event) => {
+      this.mouse.x = event.clientX;
+      this.mouse.y = event.clientY;
+    });
+    window.addEventListener('mousedown', (event) => {
+      if (event.button === 0) this.mouseDown = true;
+    });
+    window.addEventListener('mouseup', (event) => {
+      if (event.button === 0) this.mouseDown = false;
+    });
+  }
 
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+  // True while the key is held down.
+  isDown(code) {
+    return this._down.has(code);
+  }
+
+  // True only once per physical press; consumed after the game reads it.
+  // Call once per frame per action key (F, T, P/Esc, R).
+  pressed(code) {
+    if (this._pressed.has(code)) {
+      this._pressed.delete(code);
+      return true;
+    }
+    return false;
+  }
+
+  // Flush one-shot presses at the end of a frame (optional; pressed() also
+  // consumes individually, so this is just a safety net).
+  endFrame() {
+    this._pressed.clear();
+  }
+
+  // Normalised movement vector from WASD / arrow keys.
+  axis() {
+    let x = 0;
+    let y = 0;
+    if (KEYS.LEFT.some((c) => this.isDown(c))) x -= 1;
+    if (KEYS.RIGHT.some((c) => this.isDown(c))) x += 1;
+    if (KEYS.UP.some((c) => this.isDown(c))) y -= 1;
+    if (KEYS.DOWN.some((c) => this.isDown(c))) y += 1;
+    if (x !== 0 && y !== 0) {
+      const inv = 1 / Math.hypot(x, y);
+      x *= inv;
+      y *= inv;
+    }
+    return { x, y };
+  }
+
+  // Sprint while either Shift is held.
+  isRunning() {
+    return KEYS.RUN.some((c) => this.isDown(c));
+  }
 }
