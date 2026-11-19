@@ -38,15 +38,20 @@ export class PoliceManager {
       const dist = randInt(rng, SPAWN_MIN_DIST, SPAWN_MAX_DIST);
       let x = player.x + Math.cos(angle) * dist;
       let y = player.y + Math.sin(angle) * dist;
-      if (roads.length) {
+      if (roads.length && rng() < 0.6) {
         const road = roads[randInt(rng, 0, roads.length - 1)];
-        if (Math.hypot(road.x + road.w / 2 - player.x, road.y + road.h / 2 - player.y) < 900) {
-          x = road.x + road.w / 2;
-          y = road.y + road.h / 2;
+        const cx = road.x + road.w / 2;
+        const cy = road.y + road.h / 2;
+        const cd = Math.hypot(cx - player.x, cy - player.y);
+        // Road centre only counts when it is still a fair chase distance away.
+        if (cd >= SPAWN_MIN_DIST && cd <= SPAWN_MAX_DIST) {
+          x = cx;
+          y = cy;
         }
       }
       x = Math.max(30, Math.min(CONFIG.WORLD_W - 30, x));
       y = Math.max(30, Math.min(CONFIG.WORLD_H - 30, y));
+      if (Math.hypot(x - player.x, y - player.y) < SPAWN_MIN_DIST) continue;
       const sx = x - viewport.x;
       const sy = y - viewport.y;
       if (sx > -40 && sx < viewport.w + 40 && sy > -40 && sy < viewport.h + 40) continue;
