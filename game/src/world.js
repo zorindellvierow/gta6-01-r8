@@ -1,124 +1,163 @@
-// The game's rules and state, with no drawing and no browser in it: the player's paddle, the
-// pool of falling blocks and coins, spawning, collisions, score, lives and level. step() advances
-// one fixed step and returns what happened as bit flags, so the caller can react without the
-// world knowing about screens or sound. Nothing here allocates after createWorld returns.
-import { BLOCK, COIN, FIELD, LEVEL, LIVES, PLAYER, POOL_SIZE } from './config.js';
+// Crescent Bay — deterministic city generation + spatial queries.
+// Same seed string -> byte-identical city (verified by the smoke test).
 
-export const KIND_BLOCK = 0;
-export const KIND_COIN = 1;
+import { hashStringSeed, mulberry32, randRange, randInt, pick } from './random.js';
+import { CONFIG } from './config.js';
 
-export const EVENT_HIT = 1;
-export const EVENT_COIN = 2;
-export const EVENT_OVER = 4;
+const WATER = { x: 0, y: 0, w: 240, h: 1800 };
+const BEACH = { x: 240, y: 1480, w: 2160, h: 320 };
+const ROAD_W = 70;
+const BUILDING_MARGIN = 4;
 
-function overlaps(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+// Road centrelines: verticals run the full land height, horizontals the
+// full land width. One extra waterfront road hugs the bay edge.
+const VERTICAL_ROADS = [275, 450, 750, 1050, 1350, 1650, 1950, 2250];
+const HORIZONTAL_ROADS = [200, 450, 700, 950, 1200];
+
+export function districtAtPoint(x, y) {
+  for (const d of CONFIG.DISTRICTS) {
+    if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d.name;
+  }
+  return null;
 }
 
-export function createWorld(random) {
-  const player = { x: 0, y: FIELD.groundY - PLAYER.height, width: PLAYER.width, height: PLAYER.height, invulnerable: 0 };
-  const items = [];
-  for (let index = 0; index < POOL_SIZE; index += 1) {
-    items.push({ active: false, kind: KIND_BLOCK, x: 0, y: 0, width: 0, height: 0, speed: 0 });
-  }
-  const state = { player, items, score: 0, lives: LIVES, level: 1, elapsed: 0, blockTimer: 0, coinTimer: 0 };
+export function isInWater(x, y) {
+  return x >= WATER.x && x < WATER.x + WATER.w && y >= WATER.y && y < WATER.y + WATER.h;
+}
 
-  function reset() {
-    player.x = (FIELD.width - player.width) / 2;
-    player.invulnerable = 0;
-    for (const item of items) item.active = false;
-    state.score = 0;
-    state.lives = LIVES;
-    state.level = 1;
-    state.elapsed = 0;
-    state.blockTimer = BLOCK.interval;
-    state.coinTimer = COIN.interval;
-  }
-
-  function freeItem() {
-    for (let index = 0; index < items.length; index += 1) if (!items[index].active) return items[index];
-    return null;
-  }
-
-  function spawnBlock() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_BLOCK;
-    item.width = BLOCK.minWidth + random() * (BLOCK.maxWidth - BLOCK.minWidth);
-    item.height = BLOCK.height;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = BLOCK.speed + BLOCK.speedPerLevel * (state.level - 1) + random() * BLOCK.speedJitter;
-  }
-
-  function spawnCoin() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_COIN;
-    item.width = COIN.size;
-    item.height = COIN.size;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = COIN.speed + COIN.speedPerLevel * (state.level - 1);
-  }
-
-  function blockInterval() {
-    return Math.max(BLOCK.minInterval, BLOCK.interval * BLOCK.intervalScale ** (state.level - 1));
-  }
-
-  /**
-   * One fixed step. `direction` is -1, 0 or 1 (left, still, right). With `harmless` set (the title
-   * screen's backdrop) things fall but nothing touches the player and nothing scores.
-   */
-  function step(dt, direction, harmless) {
-    let events = 0;
-    state.elapsed += dt;
-    state.level = Math.min(LEVEL.max, 1 + Math.floor(state.elapsed / LEVEL.seconds));
-
-    player.x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * dt));
-    if (player.invulnerable > 0) player.invulnerable = Math.max(0, player.invulnerable - dt);
-
-    state.blockTimer -= dt;
-    if (state.blockTimer <= 0) {
-      spawnBlock();
-      state.blockTimer += blockInterval();
+export function isBlocked(x, y, city) {
+  if (isInWater(x, y)) return true;
+  for (const b of city.buildings) {
+    if (
+      x >= b.x - BUILDING_MARGIN &&
+      x < b.x + b.w + BUILDING_MARGIN &&
+      y >= b.y - BUILDING_MARGIN &&
+      y < b.y + b.h + BUILDING_MARGIN
+    ) {
+      return true;
     }
-    state.coinTimer -= dt;
-    if (state.coinTimer <= 0) {
-      spawnCoin();
-      state.coinTimer += COIN.interval + random() * COIN.intervalJitter;
-    }
+  }
+  return false;
+}
 
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      item.y += item.speed * dt;
-      if (item.y > FIELD.groundY) {
-        item.active = false;
-        if (item.kind === KIND_BLOCK && !harmless) state.score += BLOCK.dodgePoints;
-        continue;
-      }
-      if (harmless || !overlaps(item, player)) continue;
-      if (item.kind === KIND_COIN) {
-        item.active = false;
-        state.score += COIN.points;
-        events |= EVENT_COIN;
-      } else if (player.invulnerable === 0) {
-        item.active = false;
-        state.lives -= 1;
-        player.invulnerable = PLAYER.invulnerable;
-        events |= EVENT_HIT;
-        if (state.lives === 0) {
-          events |= EVENT_OVER;
-          break;
-        }
+export function generateCity(seedString) {
+  const seed = hashStringSeed(seedString);
+  const rng = mulberry32(seed);
+
+  const roads = [];
+  for (const cx of VERTICAL_ROADS) {
+    roads.push({ x: cx - ROAD_W / 2, y: 0, w: ROAD_W, h: BEACH.y });
+  }
+  for (const cy of HORIZONTAL_ROADS) {
+    roads.push({ x: WATER.w, y: cy - ROAD_W / 2, w: CONFIG.WORLD_W - WATER.w, h: ROAD_W });
+  }
+
+  // Building blocks are the gaps BETWEEN neighbouring roads — never on a
+  // road itself. Columns: [310..415], [485..715], ... Rows likewise.
+  const colGaps = [];
+  let prevRight = WATER.w;
+  for (const cx of VERTICAL_ROADS) {
+    const left = cx - ROAD_W / 2;
+    if (left > prevRight) colGaps.push([prevRight, left]);
+    prevRight = cx + ROAD_W / 2;
+  }
+  if (prevRight < CONFIG.WORLD_W) colGaps.push([prevRight, CONFIG.WORLD_W]);
+  const rowGaps = [];
+  let prevBottom = 0;
+  for (const cy of HORIZONTAL_ROADS) {
+    const top = cy - ROAD_W / 2;
+    if (top > prevBottom) rowGaps.push([prevBottom, top]);
+    prevBottom = cy + ROAD_W / 2;
+  }
+  if (prevBottom < BEACH.y) rowGaps.push([prevBottom, BEACH.y]);
+
+  const buildings = [];
+  for (const [cellX, cellRight] of colGaps) {
+    for (const [cellY, cellBottom] of rowGaps) {
+      const cellW = cellRight - cellX;
+      const cellH = cellBottom - cellY;
+      if (cellW < 70 || cellH < 70) continue;
+      if (rng() < 0.12) continue; // empty lot / plaza
+      const count = rng() < 0.3 ? 2 : 1;
+      for (let k = 0; k < count; k++) {
+        const bw = randRange(rng, 46, Math.max(48, cellW / count - 24));
+        const bh = randRange(rng, 46, Math.max(48, cellH - 24));
+        const bx = cellX + 12 + (count === 2 ? k * (cellW / 2) : (cellW - bw) / 2) + randRange(rng, 0, 6);
+        const by = cellY + 12 + (cellH - bh) / 2 + randRange(rng, -4, 4);
+        const cx = bx + bw / 2;
+        const cy = by + bh / 2;
+        if (isInWater(cx, cy)) continue;
+        buildings.push({
+          x: Math.round(bx),
+          y: Math.round(by),
+          w: Math.round(Math.min(bw, cellX + cellW - 12 - bx)),
+          h: Math.round(Math.min(bh, cellY + cellH - 12 - by)),
+          district: districtAtPoint(cx, cy) || 'DOWNTOWN',
+        });
       }
     }
-    return events;
   }
 
-  reset();
-  return { state, reset, step };
+  // Palms: beachfront row, marina waterfront, a few in the hills.
+  const palms = [];
+  for (let i = 0; i < 24; i++) {
+    palms.push({ x: Math.round(randRange(rng, 300, 2350)), y: Math.round(randRange(rng, 1510, 1750)) });
+  }
+  for (let i = 0; i < 10; i++) {
+    palms.push({ x: Math.round(randRange(rng, 255, 300)), y: Math.round(randRange(rng, 80, 1420)) });
+  }
+  for (let i = 0; i < 6; i++) {
+    palms.push({ x: Math.round(randRange(rng, 1700, 2350)), y: Math.round(randRange(rng, 80, 900)) });
+  }
+
+  // Pickups: health / cash / ammo, mostly on roads, some on the sand.
+  const kinds = ['health', 'money', 'ammo'];
+  const pickups = [];
+  for (let i = 0; i < 14; i++) {
+    let px;
+    let py;
+    if (rng() < 0.7) {
+      const road = pick(rng, roads);
+      px = randRange(rng, road.x + 8, road.x + road.w - 8);
+      py = randRange(rng, road.y + 8, road.y + road.h - 8);
+    } else {
+      px = randRange(rng, 320, 2350);
+      py = randRange(rng, 1520, 1740);
+    }
+    pickups.push({ x: Math.round(px), y: Math.round(py), kind: pick(rng, kinds) });
+  }
+
+  // Wooden piers jutting west into the bay, with boats moored alongside.
+  const piers = [
+    { x: 40, y: 300, w: 200, h: 36 },
+    { x: 40, y: 800, w: 200, h: 36 },
+    { x: 40, y: 1300, w: 200, h: 36 },
+  ];
+  const boats = [];
+  for (const pier of piers) {
+    boats.push({
+      x: Math.round(randRange(rng, 70, 190)),
+      y: Math.round(pier.y + pier.h + randRange(rng, 14, 60)),
+      angle: randRange(rng, -0.4, 0.4),
+    });
+  }
+  for (let i = 0; i < 2; i++) {
+    boats.push({
+      x: Math.round(randRange(rng, 60, 200)),
+      y: Math.round(randRange(rng, 100, 1700)),
+      angle: randRange(rng, 0, Math.PI * 2),
+    });
+  }
+
+  return {
+    seed,
+    buildings,
+    roads,
+    palms,
+    pickups,
+    piers,
+    boats,
+    water: { ...WATER },
+    beach: { ...BEACH },
+  };
 }
