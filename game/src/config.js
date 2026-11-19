@@ -1,61 +1,61 @@
-// Every tuning number and colour in one place. The playfield is a fixed 1280x720 logical area;
-// the renderer scales it to the window, so no rule below depends on the screen size.
+// Crescent Bay — static tuning & world constants.
+// Single source of truth for sizes, speeds, combat numbers, economy and palette.
 
-export const FIELD = { width: 1280, height: 720, groundY: 664 };
+export const CONFIG = {
+  // World dimensions (pixels)
+  WORLD_W: 2400,
+  WORLD_H: 1800,
 
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
-export const STEP = 1 / 60;
+  // Districts tile the land east of the bay (x >= 240) without overlap.
+  DISTRICTS: [
+    { name: 'MARINA', x: 240, y: 0, w: 560, h: 1000 },
+    { name: 'DOWNTOWN', x: 800, y: 0, w: 800, h: 1000 },
+    { name: 'HILLS', x: 1600, y: 0, w: 800, h: 1000 },
+    { name: 'BEACHFRONT', x: 240, y: 1000, w: 2160, h: 800 },
+  ],
 
-export const PLAYER = {
-  width: 72,
-  height: 24,
-  speed: 560,
-  invulnerable: 1.5,
+  // Base ground tint per district
+  DISTRICT_COLORS: {
+    MARINA: '#7fae8a',
+    DOWNTOWN: '#8d8f96',
+    HILLS: '#6f9e6a',
+    BEACHFRONT: '#e3cd96',
+  },
+
+  // Terrain palette
+  WATER_COLOR: '#2e7fc2',
+  WATER_DEEP_COLOR: '#1d5f96',
+  SAND_COLOR: '#ecd9a0',
+  ROAD_COLOR: '#4a4a52',
+  ROAD_LINE_COLOR: '#d8c95a',
+  SIDEWALK_COLOR: '#9a9aa2',
+
+  // Player movement (px per second)
+  PLAYER_WALK: 150,
+  PLAYER_RUN: 260,
+
+  // Pistol tuning
+  PISTOL: {
+    damage: 34,
+    range: 320,
+    mag: 12,
+    reloadMs: 1400,
+    cooldownMs: 220,
+  },
+
+  // Starting state
+  START_MONEY: 50,
+  START_HEALTH: 100,
+
+  // Wanted system
+  WANTED_MAX: 5,
+  WANTED_DECAY_MS: 25000,
+  BUSTED_CUT: 0.2,
+
+  // Story missions (contact: Selin, protagonist: Rook)
+  MISSION_REWARDS: [250, 600, 1200, 2200],
+  MISSION_TIME_LIMIT_MS: 240000,
+
+  // Persistence
+  SAVE_KEY: 'crescent-bay-save-v1',
 };
-
-export const LIVES = 3;
-
-export const BLOCK = {
-  minWidth: 40,
-  maxWidth: 110,
-  height: 36,
-  speed: 240,
-  speedPerLevel: 30,
-  speedJitter: 90,
-  interval: 0.55,
-  intervalScale: 0.88,
-  minInterval: 0.14,
-  dodgePoints: 1,
-};
-
-export const COIN = {
-  size: 24,
-  speed: 190,
-  speedPerLevel: 14,
-  interval: 1.4,
-  intervalJitter: 0.8,
-  points: 10,
-};
-
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 12, max: 12 };
-
-/** How many falling things can exist at once; the pool is allocated once, at boot. */
-export const POOL_SIZE = 64;
-
-export const PALETTE = {
-  backdrop: '#11141b',
-  sky: '#1b1f2a',
-  ground: '#2a3040',
-  player: '#4fc3f7',
-  block: '#e5534b',
-  coin: '#f2c94c',
-  panel: '#252b38',
-  text: '#eef1f5',
-  muted: '#8b93a3',
-};
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where the best score is kept between visits (this browser only). */
-export const BEST_KEY = 'block-dodger.best';
