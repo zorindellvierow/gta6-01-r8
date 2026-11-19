@@ -289,8 +289,6 @@ export class Game {
   _update(dt, now) {
     if (this.state !== 'playing') return;
     const input = this.input;
-    if (KEYS.PAUSE.some((c) => input.pressed(c))) this.togglePause();
-    if (this.state !== 'playing') return;
 
     if (KEYS.TAXI.some((c) => input.pressed(c))) {
       if (this.missions.taxi) this.missions.cancelTaxi();
@@ -411,6 +409,8 @@ export class Game {
     const now = t || performance.now();
     const dt = Math.min(0.05, Math.max(0.001, (now - this._lastT) / 1000 || 0.016));
     this._lastT = now;
+    // Pause key must work while paused too, so handle it outside _update.
+    if (KEYS.PAUSE.some((c) => this.input.pressed(c))) this.togglePause();
     this._update(dt, now);
     this._render();
     this.input.endFrame();
